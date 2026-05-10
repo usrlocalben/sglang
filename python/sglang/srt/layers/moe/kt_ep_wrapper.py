@@ -104,6 +104,8 @@ class KTConfig:
     num_layers: Optional[int] = None
     gpu_prefill_token_threshold: Optional[int] = None
     kt_enable_dynamic_expert_update: bool = False
+    prefill_mirror_layers: int = 0
+    prefill_mirror_socket: int = 0
 
 
 _SHARED_FULL_CONTEXT = None
@@ -1849,6 +1851,8 @@ def create_kt_config_from_server_args(
         num_layers=num_layers,
         gpu_prefill_token_threshold=server_args.kt_gpu_prefill_token_threshold,
         kt_enable_dynamic_expert_update=server_args.kt_enable_dynamic_expert_update,
+        prefill_mirror_layers=server_args.kt_prefill_mirror_layers or 0,
+        prefill_mirror_socket=server_args.kt_prefill_mirror_socket or 0,
     )
 
 
@@ -2335,6 +2339,31 @@ class KTEPWrapperMethod(FusedMoEMethodBase):
                     layer.num_experts, dtype=torch.int64, device="cpu"
                 )
             self.wrapper.load_weights(physical_to_logical_map_cpu)
+
+            # Build NUMA-local prefill mirror for the first N layers
+            if self.kt_config.prefill_mirror_layers > 0:
+                layer_idx = self.kt_config.layer_idx
+                if layer_idx < self.kt_config.prefill_mirror_layers:
+                    socket = self.kt_config.prefill_mirror_socket
+                    # Heuristic: on typical 2-socket NPS4 EPYC, nodes 0-3 are socket0,
+                    # nodes 4-7 are socket1. If topology differs, user should adjust.
+                    try:
+                        nodes = sorted(
+                            int(d.replace("node", ""))
+                            for d in os.listdir("/sys/devices/system/node")
+                            if d.startswith("node")
+                        )
+                        num_nodes = len(nodes)
+                        # assume even split across 2 sockets
+                        numa_id = nodes[socket * (num_nodes // 2)] if socket < 2 else nodes[0]
+                    except Exception:
+                        numa_id = socket * 4
+                    self.wrapper.submit_init_prefill_mirror(numa_id)
+                    logger.info(
+                        "[KT] Layer %d: prefill mirror initialized on NUMA node %d",
+                        layer_idx,
+                        numa_id,
+                    )
 
     def create_moe_runner(
         self, layer: torch.nn.Module, moe_runner_config: "MoeRunnerConfig"

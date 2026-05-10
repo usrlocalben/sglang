@@ -561,6 +561,8 @@ class ServerArgs:
     kt_gpu_experts_ratio: Optional[float] = None
     kt_max_deferred_experts_per_token: Optional[int] = None
     kt_gpu_prefill_token_threshold: Optional[int] = None
+    kt_prefill_mirror_layers: Optional[int] = None
+    kt_prefill_mirror_socket: int = 0
     record_kt_gpu_expert_distribution: bool = False
     kt_enable_dynamic_expert_update: bool = False
     kt_expert_placement_strategy: str = "uniform"
@@ -4561,6 +4563,18 @@ class ServerArgs:
             type=int,
             default=ServerArgs.kt_gpu_prefill_token_threshold,
             help="[ktransformers parameter] Token threshold for loading full layer from disk to GPU during prefill. When batch token count exceeds this threshold, temporarily load complete layer from disk instead of using CPU experts.",
+        )
+        parser.add_argument(
+            "--kt-prefill-mirror-layers",
+            type=int,
+            default=ServerArgs.kt_prefill_mirror_layers,
+            help="[ktransformers parameter] Number of layers to keep a NUMA-local weight mirror for fast layerwise prefill H2D. 0 disables the mirror.",
+        )
+        parser.add_argument(
+            "--kt-prefill-mirror-socket",
+            type=int,
+            default=ServerArgs.kt_prefill_mirror_socket,
+            help="[ktransformers parameter] Which CPU socket (0 or 1) to place the prefill mirror on. Only used when --kt-prefill-mirror-layers > 0.",
         )
         parser.add_argument(
             "--record-kt-gpu-expert-distribution",
